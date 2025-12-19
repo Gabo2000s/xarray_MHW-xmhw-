@@ -26,9 +26,7 @@ This tool is designed to process **large-scale oceanographic datasets** (global 
 Clone the repository and install the dependencies:
 
 ```bash
-git clone [https://github.com//marine-heatwave-detector.git](https://github.com/tu-usuario/marine-heatwave-detector.git)
-cd marine-heatwave-detector
-pip install -r requirements.txt
+git clone [https://github.com//marine-heatwave-detector.git](https://github.com/Gabo2000s/xarray_MHW-xmhw-))
 ```
 
 ⚙️ Input Specifications
@@ -44,9 +42,19 @@ The script expects a NetCDF file with the following characteristics:
 | **Temperature** | Sea Surface Temperature (SST)/Potential Temperature. | °C or K |
 
 ## 🖥 Usage
-Open xmhw.py.
+To integrate the **xMHW** detector into your oceanographic analysis workflow, follow these steps:
 
-Edit the CONFIGURATION section at the bottom of the script:
+1. Clone the repository
+Download the source code directly from GitHub:
+
+```bash
+git clone [https://github.com/Gabo2000s/xarray_MHW-xmhw-.git](https://github.com/Gabo2000s/xarray_MHW-xmhw-.git)
+cd xarray_MHW-xmhw-
+```
+
+2. Open xmhw.py.
+
+Edit or copy the CONFIGURATION section at the bottom of the script:
 
 ```bash
 # --- CONFIGURATION ---
@@ -57,12 +65,7 @@ CLIM_START = 1993
 CLIM_END = 2022
 ```
 
-Run the script:
-```bash
-python xmhw.py
-```
-
-📊 Output Specifications
+## 📊 Output Specifications
 The output is a NetCDF file containing the computed MHW metrics. The data is masked: grid points without an active MHW event are filled with NaN.
 
 | Variable | Name in NetCDF | Description | Units |
@@ -72,6 +75,7 @@ The output is a NetCDF file containing the computed MHW metrics. The data is mas
 | **Cumulative Intensity** | `mhw_cum_intensity` | Integrated intensity over the duration of the event. | °C days |
 | **Duration** | `mhw_duration` | Length of the MHW event. | Days |
 | **Category** | `mhw_category` | Severity category (1=Moderate, 2=Strong, 3=Severe...). | Unitless |
+Also include the clmatology and threshold 
 
 ## 🔬 Methodology
 
