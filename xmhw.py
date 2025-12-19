@@ -1,5 +1,5 @@
 """
-Marine Heatwave Detector (Hobday et al., 2016 implementation)
+Xarray Marine Heatwave Optimized Function (Hobday et al., 2016 xarray implementation)
 ==============================================================
 
 A robust, Xarray-compatible implementation of the Marine Heatwave (MHW) definitions 
@@ -376,4 +376,5 @@ if __name__ == "__main__":
     except FileNotFoundError:
         print(f"Error: Input file {INPUT_FILE} not found.")
     except Exception as e:
+
         print(f"An unexpected error occurred: {e}")
