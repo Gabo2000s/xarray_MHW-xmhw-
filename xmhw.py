@@ -7,8 +7,10 @@ proposed by Hobday et al. (2016). This script utilizes `xarray.apply_ufunc` to
 parallelize the detection algorithm across multidimensional datasets (Latitude, 
 Longitude, Depth, Time).
 
+Updated to support Marine Cold Spells (MCS) via the `cold_spells` parameter.
+
 Author: Gutiérrez-Cárdenas, GS. (ORCID: 0000-0002-3915-7684)
-Date: Dec 2025
+Date: Jan 2026
 License: MIT
 """
 
@@ -53,9 +55,9 @@ def runavg(ts, w):
 
 def detect_mhw_core(t_ordinal, temp, clim_period=(None, None), pctile=90, window_half_width=5, 
                    smooth_pctile=True, smooth_width=31, min_duration=5, 
-                   join_across_gaps=True, max_gap=2):
+                   join_across_gaps=True, max_gap=2, cold_spells=False):
     """
-    Core detection algorithm for Marine Heatwaves on a single 1D time series.
+    Core detection algorithm for Marine Heatwaves (or Cold Spells) on a single 1D time series.
     Based on Hobday et al. (2016) marine heat wave definition. Edited and optimized from 
     https://github.com/ecjoliver/marineHeatWaves
 
@@ -68,9 +70,11 @@ def detect_mhw_core(t_ordinal, temp, clim_period=(None, None), pctile=90, window
     clim_period : tuple
         (start_year, end_year) for climatology baseline.
     pctile : int
-        Percentile threshold (default 90).
+        Percentile threshold (default 90 for MHW, typically 10 for MCS).
     window_half_width : int
         Width of window for climatology calculation (default 5 days).
+    cold_spells : bool, optional
+        If True, detects cold spells (temp < threshold). Default False.
         
     Returns
     -------
@@ -132,12 +136,17 @@ def detect_mhw_core(t_ordinal, temp, clim_period=(None, None), pctile=90, window
         seas_clim_year = runavg(seas_clim_year, smooth_width)
 
     # Map back to full time series
-    # doy-1 because array is 0-indexed, doy is 1-366
     clim_thresh = thresh_clim_year[doy - 1]
     clim_seas = seas_clim_year[doy - 1]
 
-    # 3. Event Detection
-    exceed_bool = temp > clim_thresh
+    # 3. Event Detection (MHW or Cold Spell)
+    if cold_spells:
+        # Cold Spell: Event if temp < threshold
+        exceed_bool = temp < clim_thresh
+    else:
+        # Heatwave: Event if temp > threshold
+        exceed_bool = temp > clim_thresh
+
     events, n_events = ndimage.label(exceed_bool)
 
     # Filter by duration (minimum 5 days)
@@ -147,11 +156,6 @@ def detect_mhw_core(t_ordinal, temp, clim_period=(None, None), pctile=90, window
 
     # Join events across small gaps
     if join_across_gaps:
-        # Note: A more complex gap bridging logic could be implemented here 
-        # but standard label re-evaluation is often sufficient for basic bridging 
-        # if the boolean mask was pre-processed. 
-        # For strict Hobday: we usually iterate and fill gaps. 
-        # Keeping user logic here for consistency:
         events, n_events = ndimage.label(events > 0)
 
     # 4. Metrics Extraction
@@ -172,14 +176,25 @@ def detect_mhw_core(t_ordinal, temp, clim_period=(None, None), pctile=90, window
         thresh_ev = clim_thresh[idx]
         anoms = temps_ev - seas_ev
         
-        i_max = np.max(anoms)
-        i_cum = np.sum(anoms)
+        # Calculate Intensity (Max and Cumulative)
+        if cold_spells:
+            # For cold spells, anomalies are negative. 
+            # Max intensity is the minimum value (most negative).
+            i_max = np.min(anoms)
+            i_cum = np.sum(anoms)
+            peak_idx = np.argmin(anoms)
+        else:
+            i_max = np.max(anoms)
+            i_cum = np.sum(anoms)
+            peak_idx = np.argmax(anoms)
         
         # Categorization
-        peak_idx = np.argmax(anoms)
+        # Ratio = (Value - Climatology) / (Threshold - Climatology)
+        # For MCS: Both numerator and denominator are negative, resulting in a positive ratio.
         intensity_diff = thresh_ev[peak_idx] - seas_ev[peak_idx]
         if intensity_diff == 0: intensity_diff = 1e-5 # Avoid zero division
-        ratio = i_max / intensity_diff
+        
+        ratio = anoms[peak_idx] / intensity_diff
         cat = max(1, int(np.floor(ratio)))
         
         # Assign values to the full time dimension
@@ -202,10 +217,6 @@ def mhw_1d_wrapper(time_ordinal, temp, clim_start_year, clim_end_year, max_gap_i
     Wrapper to handle NaNs and interface with xarray.apply_ufunc, passing 
     dynamic configuration parameters to the core detection logic.
 
-    This function ensures that only small data gaps (<= max_gap_interp) are 
-    interpolated, preserving the integrity of the time series for larger gaps 
-    as per Hobday et al. (2016).
-
     Parameters
     ----------
     time_ordinal : np.ndarray
@@ -218,21 +229,19 @@ def mhw_1d_wrapper(time_ordinal, temp, clim_start_year, clim_end_year, max_gap_i
         End year of the climatology baseline.
     max_gap_interp : int, optional
         Maximum gap length (in days) to fill via linear interpolation. 
-        Gaps larger than this will remain as NaNs (breaking potential events).
-        Default is 2 days.
+        Gaps larger than this will remain as NaNs.
     **kwargs : optional
         Additional arguments passed directly to `detect_mhw_core`.
-        (e.g., pctile, window_half_width, min_duration).
+        (e.g., pctile, window_half_width, min_duration, cold_spells).
 
     Returns
     -------
     tuple
-        Tuple of numpy arrays containing MHW statistics.
+        Tuple of numpy arrays containing MHW/MCS statistics.
     """
     T = len(time_ordinal)
     
     # --- CRITICAL FIX: Dask Read-Only & Gap Handling ---
-    # Create a writable copy of the data. Dask arrays are often read-only chunks.
     temp = temp.copy()
     
     # 1. Fast exit for land mask (all NaNs)
@@ -242,26 +251,17 @@ def mhw_1d_wrapper(time_ordinal, temp, clim_start_year, clim_end_year, max_gap_i
                 nan_arr, nan_arr, nan_arr, nan_arr)
 
     # 2. Smart Interpolation (Only small gaps)
-    # We only fill gaps that are <= max_gap_interp to maintain scientific rigor.
     if np.isnan(temp).any():
         is_valid = ~np.isnan(temp)
         valid_indices = np.flatnonzero(is_valid)
 
-        # If we have enough data to interpolate
         if len(valid_indices) > 1:
-            # Find distances between consecutive valid points
             gaps = np.diff(valid_indices)
-            
-            # Identify indices where the gap is larger than 1 but within the limit
-            # gaps > 1 means there is at least 1 missing day between points
             fillable_gaps = np.where((gaps > 1) & (gaps <= (max_gap_interp + 1)))[0]
 
             for i in fillable_gaps:
                 start_idx = valid_indices[i]
                 end_idx = valid_indices[i+1]
-                
-                # Perform linear interpolation for this specific gap
-                # We include start and end points for the interpolation reference
                 x_gap = np.arange(start_idx + 1, end_idx)
                 temp[x_gap] = np.interp(
                     x_gap, 
@@ -270,16 +270,7 @@ def mhw_1d_wrapper(time_ordinal, temp, clim_start_year, clim_end_year, max_gap_i
                 )
     
     # 3. Type safety for Numba/Core logic
-    # Remaining NaNs (large gaps) are converted to a fill value (-9999) 
-    # to ensure boolean comparisons in the core function don't crash, 
-    # effectively breaking the MHW event detection at that point.
     time_ordinal_safe = time_ordinal.astype(int)
-    
-    # Note: Depending on detect_mhw_core implementation, leaving NaNs might be fine
-    # if it uses nan-aware functions. If it uses strict boolean (temp > clim), 
-    # NaNs result in False, which correctly breaks the event.
-    # We keep it as float to preserve NaNs if the core handles them, 
-    # otherwise, NaN comparison naturally returns False preventing false positives.
     temp_safe = temp.astype(float)
 
     # Pass **kwargs to the core function
@@ -296,7 +287,7 @@ def mhw_1d_wrapper(time_ordinal, temp, clim_start_year, clim_end_year, max_gap_i
 
 def xmhw_func(ds, temp_var_name, clim_period, **kwargs):
     """
-    Applies the MHW detection over the entire Xarray Dataset using Dask,
+    Applies the MHW (or MCS) detection over the entire Xarray Dataset using Dask,
     allowing full customization of detection parameters.
 
     Parameters
@@ -310,19 +301,19 @@ def xmhw_func(ds, temp_var_name, clim_period, **kwargs):
     **kwargs : optional
         Arguments passed directly to the detection algorithm. 
         Key arguments include:
-            - pctile (default: 90)
+            - cold_spells (bool): If True, detect Cold Spells. Default False.
+            - pctile (default: 90 for MHW, auto-set to 10 for MCS if not provided)
             - window_half_width (default: 5)
             - min_duration (default: 5)
-            - max_gap_interp (default: 2): Max days of missing data to interpolate.
-                                            Larger gaps remain NaN.
+            - max_gap_interp (default: 2)
 
     Returns
     -------
     xr.Dataset
-        A new dataset containing the detected MHW metrics masked by event occurrence.
+        A new dataset containing the detected metrics masked by event occurrence.
+        Variable prefixes adapt to 'mcs_' if cold_spells=True, else 'mhw_'.
     """
     # 1. Prepare Time Coordinate
-    # Convert datetime objects to ordinal integers for the core algorithm
     time_index = ds.indexes['time']
     time_ordinal_np = time_index.map(lambda x: x.toordinal()).values
     
@@ -333,16 +324,20 @@ def xmhw_func(ds, temp_var_name, clim_period, **kwargs):
     )
 
     # 2. Configure Arguments for apply_ufunc
-    # Merge mandatory climatology period with optional user arguments
     func_kwargs = {
         'clim_start_year': clim_period[0], 
         'clim_end_year': clim_period[1]
     }
-    # kwargs will now carry 'max_gap_interp' if passed from the main script
     func_kwargs.update(kwargs)
 
-    # Define output types matching the return tuple of detect_mhw_core
-    # [seas, thresh, anomaly, is_mhw, duration, category, intensity_max, intensity_cum]
+    # Handle defaults for MCS vs MHW
+    if 'cold_spells' not in func_kwargs:
+        func_kwargs['cold_spells'] = False
+    
+    # Set default percentile if not provided (90 for Heat, 10 for Cold)
+    if 'pctile' not in func_kwargs:
+        func_kwargs['pctile'] = 10 if func_kwargs['cold_spells'] else 90
+
     output_dtypes = [float, float, float, bool, float, float, float, float]
     
     # 3. Apply Vectorized UFunc
@@ -365,14 +360,16 @@ def xmhw_func(ds, temp_var_name, clim_period, **kwargs):
     # 4. Assemble Output Dataset
     ds_out = xr.Dataset()
     
-    # Apply Mask: Variables are NaN where no MHW is present
-    ds_out['mhw_intensity'] = anomaly.where(is_mhw)
-    ds_out['mhw_duration'] = duration.where(is_mhw)
-    ds_out['mhw_category'] = category.where(is_mhw)
-    ds_out['mhw_max_intensity'] = intensity_max.where(is_mhw)
-    ds_out['mhw_cum_intensity'] = intensity_cum.where(is_mhw)
+    # Determine prefix based on event type for clear variable names
+    prefix = 'mcs' if func_kwargs['cold_spells'] else 'mhw'
+
+    # Apply Mask: Variables are NaN where no event is present
+    ds_out[f'{prefix}_intensity'] = anomaly.where(is_mhw)
+    ds_out[f'{prefix}_duration'] = duration.where(is_mhw)
+    ds_out[f'{prefix}_category'] = category.where(is_mhw)
+    ds_out[f'{prefix}_max_intensity'] = intensity_max.where(is_mhw)
+    ds_out[f'{prefix}_cum_intensity'] = intensity_cum.where(is_mhw)
     
-    # Optional: diagnostic variables
     ds_out['climatology'] = seas
     ds_out['threshold'] = thresh
 
