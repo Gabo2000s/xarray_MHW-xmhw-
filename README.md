@@ -94,7 +94,7 @@ The algorithm implements the standard hierarchical definition by **Hobday et al.
 *  **Chunking:** The workflow relies on `Dask` chunking to process datasets significantly larger than the available RAM by streaming blocks of spatial data. 
   
 ## 📄 License
-Distributed under the Apache License 2.0. See LICENSE for more information.
+Distributed under the GPL-3.0 license. See LICENSE for more information.
 
 ## 📚 References
 Hobday, A. J., et al. (2016). A hierarchical approach to defining marine heatwaves. Progress in Oceanography, 141, 227-238. DOI: 10.1016/j.pocean.2015.12.014
