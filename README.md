@@ -75,25 +75,26 @@ The output is a NetCDF file containing the computed MHW metrics. The data is mas
 | **Cumulative Intensity** | `mhw_cum_intensity` | Integrated intensity over the duration of the event. | °C days |
 | **Duration** | `mhw_duration` | Length of the MHW event. | Days |
 | **Category** | `mhw_category` | Severity category (1=Moderate, 2=Strong, 3=Severe...). | Unitless |
-Also include the clmatology and threshold 
+Also include the climatology and threshold 
 
 ## 🔬 Methodology
 
 ### Scientific Definition
-The algorithm follows the hierarchical definition by **Hobday et al. (2016)**:
+The algorithm implements the standard hierarchical definition by **Hobday et al. (2016)**:
 
-* **Climatology:** Calculated over a user-defined baseline (default 1993-2022) using an 11-day centered window.
-* **Threshold:** The 90th percentile of the baseline temperatures.
-* **Event:** Periods where temperature exceeds the threshold for at least 5 consecutive days.
-* **Gaps:** Events broken by gaps of less than 3 days are merged.
+* **Climatology:** Calculated over a user-defined baseline (default 1991-2020) using an 11-day centered window and a 31-day moving average smoothing.
+* **Threshold:** temperatures exceeding the 90th percentile for MHW and 10th percentile for MCS
+* ** Gap handling:** the algorinthm performs a pre-filter joining, physically bridges gaps of up to 2 days (default) before checking the minimum duration of the events. The original Hobaday el al. (2016) implementation joins events after filtering. That ensures that long, significant events interrupted by a biref drop in temperature are correcly identified as a single continuous event, rather than being discrded as two invalid short fragments. 
+* **Event definition:** After the gap filling, any continuous period satisfying the threshold conditio at lesat 5 days is recorded as an event.
 
 ### Technical Implementation
-* **Chunking:** The data is chunked using `Dask` to allow processing of datasets larger than RAM.
-* **Core Logic:** The detection function (`detect_mhw_core`) is a pure `NumPy` implementation optimized for 1D arrays.
+* **High-Performance Parallelism:** Using xarray with `dask = parallelized`, the tool maps the detection logic across the time dimension, allowing the workloead to be distribuited across all available CPU cores or a cluster, handling N-dimensional arrays (latitude, longitude, time, depth) efficiently
+* **Fast exit optimization:** The wrapper function includes a "Land mask cehcking". If the time series contain only `NaN`, the algorithm retunr `NaN` array, savin massive computation time during the process of big datasets 
 * **Wrapper:** `xarray.apply_ufunc` maps this 1D function across the **Time** dimension of the N-dimensional input array, effectively looping over `Lat`, `Lon`, and `Depth` in C-speed (vectorized).
-
+*  **Chunking:** The workflow relies on `Dask` chunking to process datasets significantly larger than the available RAM by streaming blocks of spatial data. 
+  
 ## 📄 License
-Distributed under the MIT License. See LICENSE for more information.
+Distributed under the Apache License 2.0. See LICENSE for more information.
 
 ## 📚 References
 Hobday, A. J., et al. (2016). A hierarchical approach to defining marine heatwaves. Progress in Oceanography, 141, 227-238. DOI: 10.1016/j.pocean.2015.12.014
