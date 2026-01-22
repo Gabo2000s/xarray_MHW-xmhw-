@@ -411,7 +411,7 @@ def xrMHW_func(ds, temp_var_name, clim_period, **kwargs):
 
     # Define output types matching the return tuple of the core function
     # (seas, thresh, anomaly, is_mhw, duration, category, intensity_max, intensity_cum)
-    output_dtypes = [float, float, float, bool, float, float, float, float]
+    output_dtypes = [np.float32, np.float32, np.float32, bool, np.float32, np.float32, np.float32, np.float32]
     
     # 3. Apply Vectorized UFunc
     # This maps the 1D wrapper function over every spatial pixel in parallel
@@ -457,4 +457,5 @@ def xrMHW_func(ds, temp_var_name, clim_period, **kwargs):
     ds_out.attrs['mhw_detection_period'] = str(clim_period)
     ds_out.attrs['mhw_type'] = 'Cold Spell' if func_kwargs['cold_spells'] else 'Heatwave'
     
+
     return ds_out
